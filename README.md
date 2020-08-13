@@ -1,1 +1,1 @@
-Some tests for LFT8F328P
+Some tests for LGT8F328P
