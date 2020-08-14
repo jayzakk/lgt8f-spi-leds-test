@@ -58,8 +58,9 @@ void outSpiLeds(uint8_t*p, int leds) {
   int count = leds * 3;
 
   uint8_t sreg = SREG;
+  SPCR = 0 << SPIE | 1 << SPE | 1 << MSTR; // SPR1, SPR0
 
-  while ((count--) > 0) {
+  while (count-- > 0) {
     #ifdef GAMMACORRECTION
     uint8_t NIB = pgm_read_byte(&gamma8[*p++]);
     #else
@@ -81,6 +82,11 @@ void outSpiLeds(uint8_t*p, int leds) {
     SPIOUT(NIB & 1 ? b1L2 : b0L2);
     SREG = sreg;
   }
+  SPIOUT(0);
+  SPIOUT(0);
+  SPIOUT(0);
+  SPIOUT(0);
+  SPCR=0;
 }
 
 
