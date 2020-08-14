@@ -30,7 +30,7 @@ void setupSpiLeds() {
 #elif F_CPU == 16000000 // SPI=8M LEDs=800k
   SPSR = 1; // SPI2X
 #else
-#pragma warn "LGT8SPILED only supports F_CPU 16+32MHz"
+#pragma GCC error "LGT8SPILED only supports F_CPU 16+32MHz"
 #endif
   SPFR = 0; // (WRFULL,WREMPT,WRPTR1,WRPTR2)
   SPCR = 0; // disable for now
