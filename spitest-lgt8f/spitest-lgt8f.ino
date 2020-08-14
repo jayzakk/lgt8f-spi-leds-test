@@ -19,10 +19,12 @@ void loop() {
 
 
 void setupSpiLeds() {
-  digitalWrite(SS, HIGH);
-  pinMode(SS, OUTPUT);
+  fastioWrite(D10, HIGH);
+  fastioMode(D10, OUTPUT);
+  fastioMode(D11, OUTPUT);
+  fastioWrite(D11, LOW);
 
-  SPCR = 0 << SPIE | 1 << SPE | 1 << MSTR; // SPR1, SPR0
+  SPCR = 0 << SPIE | 1 << SPE | 1 << MSTR;
 #if F_CPU == 32000000 // SPI=8M LEDs=800k
   SPSR = 0; // SPI2X
 #elif F_CPU == 16000000 // SPI=8M LEDs=800k
@@ -31,8 +33,8 @@ void setupSpiLeds() {
 #pragma warn "LGT8SPILED only supports F_CPU 16+32MHz"
 #endif
   SPFR = 0; // (WRFULL,WREMPT,WRPTR1,WRPTR2)
-
-  pinMode(MOSI, OUTPUT);
+  SPCR = 0; // disable for now
+  
 }
 
 
@@ -58,7 +60,7 @@ void outSpiLeds(uint8_t*p, int leds) {
   int count = leds * 3;
 
   uint8_t sreg = SREG;
-  SPCR = 0 << SPIE | 1 << SPE | 1 << MSTR; // SPR1, SPR0
+  SPCR = 0 << SPIE | 1 << SPE | 1 << MSTR; // enable SPI
 
   while (count-- > 0) {
     #ifdef GAMMACORRECTION
@@ -82,6 +84,8 @@ void outSpiLeds(uint8_t*p, int leds) {
     SPIOUT(NIB & 1 ? b1L2 : b0L2);
     SREG = sreg;
   }
+
+  // keep low and switch off - if not, has high state
   SPIOUT(0);
   SPIOUT(0);
   SPIOUT(0);
