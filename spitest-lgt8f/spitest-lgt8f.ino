@@ -71,6 +71,9 @@ void outSpiLeds(uint8_t*p, int leds) {
     SPIOUT(NIB & 32 ? b1R4 : b0R4);
     SPIOUT((NIB & 32 ? b1L4 : b0L4) | b_R6);
     SPIOUT(NIB & 16 ? b1L2 : b0L2);
+    SREG = sreg;
+    asm ( "nop;\n" );
+    cli();
     SPIOUT(NIB & 8 ? b1 : b0);
     SPIOUT(NIB & 4 ? b1R2 : b0R2);
     SPIOUT(NIB & 2 ? b1R4 : b0R4);
