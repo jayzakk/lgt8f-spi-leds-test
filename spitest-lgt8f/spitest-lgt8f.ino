@@ -121,7 +121,7 @@
 */
 
 // how many leds in the strip?
-#define LEDS 29
+#define NUMBER_OF_LEDS 29
 
 // we can do basic gamma correction (using the mapping table floating around in the net):
 //#define GAMMACORRECTION
@@ -138,45 +138,89 @@
 //#define WS_TIMING_500 // good 4MHz SPI for "old" chips, and probably not for "new" chips
 
 
-struct cRGB {
-  #ifdef GRB_ON_THE_FLY
-  uint8_t r;
-  uint8_t g;
-  #else
-  uint8_t g;
-  uint8_t r;
-  #endif
-  uint8_t b;  
-  set(uint8_t red, uint8_t green, uint8_t blue) {
-    r=red;
-    g=green;
-    b=blue;
-  }
-} __attribute__((packed));
 
-// The LED leddata is BYTE based, you need to take care yourself of the byte order for each color:
-union leddataUNION {
-  uint8_t raw[LEDS * 3];
-  cRGB led[LEDS];
-  } leddata;
-
+// ARDUINO setup() and loop()
 
 void setup() {
-  setupSpiLeds();
 }
 
 void loop() {
-  rainbowBRG();
+  // example code: do effect
+  // from: https://codebender.cc/sketch:80438#Neopixel%20Rainbow.ino
+  uint16_t i, j;
+
+  for (j = 0; j < 256; j++) {
+    for (i = 0; i < NUMBER_OF_LEDS; i++) {
+      byte WheelPos = (2 * (i * 1 + j)) & 255;
+      if (WheelPos < 85) {
+        setPixel(i, 255 - WheelPos * 3, WheelPos * 3, 0);
+      }
+      else if (WheelPos < 170) {
+        WheelPos -= 85;
+        setPixel(i, 0, 255 - WheelPos * 3, WheelPos * 3);
+      }
+      else {
+        WheelPos -= 170;
+        setPixel(i, WheelPos * 3, 0, 255 - WheelPos * 3);
+      }
+    }
+
+    // set first 5 pixels
+    setPixel(0, 255, 0, 0); // R
+    setPixel(1, 0, 255, 0); // G
+    setPixel(2, 0, 0, 255); // B
+    setPixel(3, 255, 255, 255); // WHITE
+    setPixel(4, 0, 0, 0); // BLACK
+
+    display();
+    delay(20);
+  }
 }
 
 
-void setPixel(int led, cRGB color) {
-  leddata.led[led].set(color.r,color.g,color.b);
+
+
+// rgb example struct for the led data buffer
+struct cRGB {
+#ifdef GRB_ON_THE_FLY
+  uint8_t r;
+  uint8_t g;
+#else
+  uint8_t g;
+  uint8_t r;
+#endif
+  uint8_t b;
+  set(uint8_t red, uint8_t green, uint8_t blue) {
+    r = red;
+    g = green;
+    b = blue;
+  }
+} __attribute__((packed));
+
+// buffer for led data
+cRGB leds[NUMBER_OF_LEDS];
+
+// example functions: set a led color
+void setPixel(int led, uint8_t red, uint8_t green, uint8_t blue) {
+  leds[led].set(red, green, blue);
 }
 
-void setPixel(int led, uint8_t red, uint8_t green, uint8_t blue) { 
-  leddata.led[led].set(red,green,blue);
+// example function: push to stripe, initialize, of not done before
+boolean wsIsInitialized = false;
+void display() {
+  if (!wsIsInitialized) {
+    setupSpiLeds();
+    wsIsInitialized = true;
+  }
+  outSpiLeds(leds, NUMBER_OF_LEDS);
 }
+
+
+//
+// the code ^^ 
+// 
+
+
 
 void setupSpiLeds() {
   // D10 (SS) must be set output, HIGH; SPI may stop working, if not
@@ -195,7 +239,7 @@ void setupSpiLeds() {
 #endif
 
   // configure the SPI clock for our needs
-  
+
 #ifdef WS_TIMING_375
   // SPI=8M LEDs=800k
 #if F_CPU == 32000000   // :4
@@ -241,11 +285,13 @@ const uint8_t PROGMEM gamma8[] = {    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
 
 #define SPIOUT(N) { uint8_t _m=((N));while ((SPFR & _BV(WRFULL))); SPDR=_m; }
 
-void outSpiLeds(uint8_t*p, int leds) {
+void outSpiLeds(void*data, int numleds) {
+  uint8_t*p = (uint8_t*)data;
+
 #ifdef GRB_ON_THE_FLY
   uint8_t ccount = 0;
 #endif
-  uint8_t *pEnd = p + (leds * 3);
+  uint8_t *pEnd = p + (numleds * 3);
 
   uint8_t sreg = SREG;
 
@@ -349,7 +395,7 @@ void outSpiLeds(uint8_t*p, int leds) {
 #ifdef GRB_ON_THE_FLY
     ccount++;
     if (ccount == 3) {
-      p+=ccount;
+      p += ccount;
       ccount = 0;
     }
 #endif
@@ -376,37 +422,4 @@ void outSpiLeds(uint8_t*p, int leds) {
   // now D11 is under GPIO control
 
   SREG = sreg;
-}
-
-
-// from: https://codebender.cc/sketch:80438#Neopixel%20Rainbow.ino
-void rainbowBRG() {
-  uint16_t i, j;
-
-  for (j = 0; j < 256; j++) {
-    for (i = 0; i < LEDS; i++) {
-      byte WheelPos = (2 * (i * 1 + j)) & 255;
-      if (WheelPos < 85) {
-        setPixel(i,255 - WheelPos * 3,WheelPos * 3,0);
-      }
-      else if (WheelPos < 170) {
-        WheelPos -= 85;
-        setPixel(i,0,255 - WheelPos * 3,WheelPos * 3);
-      }
-      else {
-        WheelPos -= 170;
-        setPixel(i,WheelPos * 3,0,255 - WheelPos * 3);
-      }
-    }
-
-    // set first 5 pixels
-    setPixel(0,255,0,0); // R
-    setPixel(1,0,255,0); // G
-    setPixel(2,0,0,255); // B
-    setPixel(3,255,255,255); // WHITE
-    setPixel(4,0,0,0); // BLACK
-
-    outSpiLeds(leddata.raw, LEDS);
-    delay(20);
-  }
 }
