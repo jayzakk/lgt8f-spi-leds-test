@@ -98,9 +98,9 @@
     5 bits each bit @4M SPI: 0=500ns/750ns 1=750ns/500ns
     Will also work with 8MHz clocked MCU, as we only use 4MHz SPI speed
 
-  2b) WS_TIMING_250: Still-in-specs timing for the "new chips":
+  2b) WS_TIMING_250: Still-in-specs timing for the "new chips", and still good for the "old" ones:
     Same as 2), but using: 0=250ns/1000ns 1=1000ns/250ns
-    Though THAT would be in spec to the older chips, too, it's exactly on their limits.
+    THAT would be in spec to the older chips, too, it's exactly on their limits.
 
   I don't exacly know what kind of stripes I do have, but ALL of them work on ALL of the modes.
   The DO (chain output) signals from the WS (measured by oscilloscope) suggest the old timing:
@@ -111,10 +111,10 @@
   Oh, and if anyone is asking "what is the ECO version"?
   - they are cheaper (25%)
   - they may use more power (16ma instead 12ma for each color)
-  - they do not have a guaranteed "typical" brightness (read: the are darker)
+  - they do not have a guaranteed "typical" brightness (read: they are darker and may even visually differ in brightness)
   - no 100nf filter capacitor in the chip
   - for processing/soldering of single parts: MSL level 6 only (reflow immediately)
-  But they are perfect for some home projects
+  But they are perfect for your home projects
 
   Just lets assume that WS_TIMING_250 is a safe setting valid for all types
 
