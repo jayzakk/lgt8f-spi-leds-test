@@ -4,7 +4,7 @@
 // should help out with "longer" ISRs (softwareserial)
 
 // this is just a proof of concept: push bytes through SPI
-// we do not care of cRGB() or setPixel() things
+// we do not take care of cRGB() or setPixel() things
 // output is not color-ordered (1:1 byte-to-bitstream output)
 // take care of your color ordering yourself
 
@@ -15,10 +15,10 @@
 // how many leds in the strip?
 #define LEDS 30
 
-// we can do rough gamma correction:
+// we can do basic gamma correction:
 //#define GAMMACORRECTION
 
-// we can do exact or rough timing (see below):
+// we can do exact or so-so timing (see below):
 //#define EXACT_LED_TIMING
 
 uint8_t buffer[LEDS * 3];
@@ -52,7 +52,7 @@ void setupSpiLeds() {
 #endif
 
 #else
-  // SPI=4M LEDs=400k
+  // SPI=4M LEDs=800k
 #if F_CPU == 32000000   // :8
   SPCR |= 1 << SPR0;
   SPSR = 1 << SPI2X;
