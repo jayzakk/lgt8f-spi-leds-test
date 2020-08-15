@@ -68,7 +68,7 @@ void setupSpiLeds() {
 #endif
 
   SPFR = 0; // (WRFULL,WREMPT,WRPTR1,WRPTR2)
-  SPCR &= ~(1 << SPE); // diable SPI
+  SPCR &= ~(1 << SPE); // disable SPI
 
 }
 
@@ -153,7 +153,7 @@ void outSpiLeds(uint8_t*p, int leds) {
   SPIOUT(0);
   SPIOUT(0);
   SPIOUT(0);
-  SPCR &= ~(1 << SPE); // diable SPI
+  SPCR &= ~(1 << SPE); // disable SPI
 }
 
 
