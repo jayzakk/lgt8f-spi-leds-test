@@ -31,10 +31,8 @@
 
 
 
-  ( Side notes:
-  There a a LOT of this 2812 LEDs around, and depending on the company, timing differ.
-  Examples:
-
+  There a a LOT of this 2812 LEDs around, and depending on the company, appendix, and sub-version, timing differ.
+  
   - WS2812B V3    250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811151649_Worldsemi-WS2812B-V3_C114585.pdf
   - WS2812D       250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811021523_Worldsemi-WS2812D-F8_C139126.pdf
   - WS2812S       250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811011939_Worldsemi-WS2812S_C114584.pdf
@@ -45,7 +43,7 @@
                   This IS some documentation bug with the 1-low-time, yes ^^
   - WS2812C       220-380ns/580-1600ns + 580-1600ns/220-420ns     https://datasheet.lcsc.com/szlcsc/1810231210_Worldsemi-WS2812C_C114587.pdf
   - WS2813-Mini   220-380ns/580-1600ns + 580-1600ns/220-420ns     https://datasheet.lcsc.com/szlcsc/1810010024_Worldsemi-WS2813-Mini-WS2813-3535_C189639.pdf
-  )
+  
 
 
   This code has 2 (and a half) timing "modes":
