@@ -51,7 +51,6 @@
   1) WS_TIMING_375: Very accurate timing for "old chips", and still in spec with the "new chips":
     10 bits each bit @8M SPI: 1250ns cycle time, 0=375ns/875ns 1=875ns/375ns
     Only works with 32MHz and 16MHz clocked MCU, as we need 8MHz SPI speed.
-    Uncomment the EXACT_LED_TIMING to use this. Results in larger code (and more CPU used, but we're waiting a lot anyways)
 
   2) WS_TIMING_500: Still-in-specs timing for the "old chips":
     5 bits each bit @4M SPI: 0=500ns/750ns 1=750ns/500ns
@@ -158,6 +157,9 @@ void outSpiLeds(uint8_t*p, int leds) {
     uint8_t val = *p++;
 #endif
 
+    // disable ISRs for now
+    cli();
+
 #ifdef WS_TIMING_375
     // 375/875 timing:
     // 8 bits to 80 bits: AAAAAAA0 00BBBBBB B000CCCC CCC000DD DDDDD000  (upper nibble)
@@ -169,22 +171,23 @@ void outSpiLeds(uint8_t*p, int leds) {
     #define fb1    0b01111111
 
     // A=128 B=64 C=32 D=16
-    cli();
     SPIOUT(val & 128 ? fb1 << 1 : fb0 << 1);                                      //A
     SPIOUT(val & 64 ? fb1 >> 1 : fb0 >> 1);                                       //B
     SPIOUT((val & 32 ? fb1 >> 3 : fb0 >> 3) | (val & 64 ? fb1 << 5 : fb0 << 5));  //B+C
     SPIOUT((val & 32 ? fb1 << 5 : fb0 << 5) | 3); // D 2 msbs are always 1        //C+D
     SPIOUT(val & 16 ? fb1 << 3 : fb0 << 3);                                       //D
+
+    // allow ISRs for a short moment, which may have queued up:
     SREG = sreg;
     asm ( "nop;\n" );
-    // E=8 F=4 G=2 H=1
     cli();
+
+    // E=8 F=4 G=2 H=1
     SPIOUT(val & 8 ? fb1 << 1 : fb0 << 1);                                        //E
     SPIOUT(val & 4 ? fb1 >> 1 : fb0 >> 1);                                        //F
     SPIOUT((val & 2 ? fb1 >> 3 : fb0 >> 3) | (val & 4 ? fb1 << 5 : fb0 << 5));    //F+G
     SPIOUT((val & 2 ? fb1 << 5 : fb0 << 5) | 3); // G 2 msbs  are always 1        //G+H
     SPIOUT(val & 1 ? fb1 << 3 : fb0 << 3);                                        //H
-    SREG = sreg;
 #endif
 
 #ifdef WS_TIMING_500
@@ -197,7 +200,6 @@ void outSpiLeds(uint8_t*p, int leds) {
     #define fb1 0b00000111
 
     // A=128 B=64 C=32 D=16 E=8 F=4 G=2 H=1
-    cli();
     SPIOUT((val & 128 ? fb1 << 5 : fb0 << 5) | (val & 64 ? fb1 : fb0));           //A+B
     SPIOUT((val & 32 ? fb1 << 3 : fb0 << 3) | 1); // D msb is 1 always            //C+D
     SPIOUT((val & 16 ? fb1 << 6 : fb0 << 6) | (val & 8 ? fb1 << 1 : fb0 << 1));   //D+E
@@ -221,7 +223,6 @@ void outSpiLeds(uint8_t*p, int leds) {
     // defines: only the msb 4 bits, as the 1 lsb is always 0
     #define fb0 0b00001000
     #define fb1 0b00001111
-    cli();
     SPIOUT((val & 128 ? fb1 << 4 : fb0 << 4) | (val & 64 ? fb1 >> 1 : fb0 >> 1));                             //A+B
     SPIOUT((val & 64 ? fb1 << 7 : fb0 << 7 ) | (val & 32 ? fb1 << 2 : fb0 << 2) | 1); // D msb is 1 always    //B+C+D
     SPIOUT((val & 16 ? fb1 << 5 : fb0 << 5) | (val & 8 ? fb1 : fb0));                                         //D+E
@@ -229,11 +230,11 @@ void outSpiLeds(uint8_t*p, int leds) {
     SPIOUT((val & 2 ? fb1 << 6 : fb0 << 6) | (val & 1 ? fb1 << 1 : fb0 << 1));                                //G+H
 #endif
 
+    // allow ISRs again
     SREG = sreg;
-
   }
 
-  // keep line low and switch SPI off - if not, output signal has 1 state
+  // keep line low and switch SPI off while low - if not, output signal becomes high state after buffer emptied
   SPIOUT(0);
   SPIOUT(0);
   SPIOUT(0);
