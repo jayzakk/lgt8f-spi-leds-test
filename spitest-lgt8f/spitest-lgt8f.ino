@@ -15,29 +15,70 @@
   All that bit checking and shifting will get perfectly optimized by the compiler, even if it looks complicated
 
 
-  WS2812 chip timing:
+  How does this work?
+  
+  The WS2811/12/13/..-series of LEDs do need 24 bits of color information (8 bits for each basic color red/green/blue, in some chip specific color order).
+  These bits are transmitted using a special, pulse-width based serial one-wire protocol:
+  A "1" bit is sent as a long HIGH amd a short LOW, as a "0" bit is a short HIGH and a long LOW level.
+  
+  We now abuse a hardware byte serializer (SPI device) to fake the needed protocol by sending a couple of 1 bits for the HIGH level, and a couple 
+  of 0 bits for the LOW level. The number of bits defines the length of the HIGH or LOW level sent.
+  As an example, if we send a "10000000" through SPI with 8MHz, we would see a HIGH level of 125ns (nanoseconds), and a LOW level of 875ns, for 
+  a total cycle of 1000ns (1/8th of 8MHz). Unfortunately, the WS LEDs need a total cycle time (HIGH+LOW phase) of 1250ns, which equates to 800kHz. To 
+  accomplish that, we need to not use 8 bits for a cycle, but 10 (at 8MHz) or 5 (at 4MhZ). The code needs to convert the 8 bit color data into 80 (or 40) 
+  bits, which is 10 (or 5) bytes. Back to a correct byte boundary, we can write a very simple code.
+
+  Example again for a 40-bit transfer:
+  The code needs to send the first color byte 200 (decimal, which is C8 in hex or 11001000 in binary). These 8 bits (7-0, highest first) have to be packed 
+  into a bitstream. From timing definitions (see below), we know we need to send "10000" binary for a "0" and "11110" binary for a 1, at 4MHz SPI speed.
+  So, we split the 8 bits of the input data ("200") into 8 blocks each 5 bits:
+
+  1 => 11110
+  1 => 11110
+  0 => 10000
+  0 => 10000
+  1 => 11110
+  0 => 10000
+  0 => 10000
+  0 => 10000
+
+  and combine them to a total of 40 bits in a row:
+
+  11110111 10100001 00001111 01000010 00010000  
+
+  These 5 bytes are sent timing-accurate using the SPI serializer hardware, and the WS LEDs will understand a color value of "200".
+  Three of these values make up a full color (red, green, blue). Now, each of the LEDs in a strip want their own color, so have to to send 
+  this for each LED. The first (receiving) LED transfers this data to the next one, as soon as it receives new data for itself. This chain 
+  works "by itself". Having 30 LEDs, makes up 90 color values (30 times red, green, blue), and 450 bytes to be transferred.
+  When no new data is sent in a specified time, all the LEDs will "latch": switch in parallel to the last color they received for themselves.
+
+  Easy, isn't it? ;)
+   
+
+  
+
+  WS2812 LED chip timing:
 
   Official timings from WORLDSEMI datasheet I used (for models B-v3, D, S):
-   0-Bit: HIGH=400ns, LOW=850ns
-   1-Bit: HIGH=850ns, LOW=400ns
-
-  They allow ±150ns tolerance, which means:
-   400ns is anything from 250ns to 550ns
-   850ns is anything from 700ns to 1000ns
-
+   0-Bit: HIGH=400ns, LOW=850ns  (±150ns tolerance)
+   1-Bit: HIGH=850ns, LOW=400ns  (±150ns tolerance)
+  Which means:
+   0-Bit: HIGH=250-550ns,  LOW=700-1000ns
+   1-Bit: HIGH=700-1000ns, LOW= 250-550ns
+  
   There is a "new" timing for models B-v5,C,Mini and WS2813+, which is:
    0-Bit: HIGH=220-380ns,  LOW=580-1600ns
    1-Bit: HIGH=580-1600ns, LOW=220- 420 ns
 
 
 
-  There a a LOT of this 2812 LEDs around, and depending on the company, appendix, and sub-version, timing differ.
+  There a a LOT of this 2812 LEDs around, and depending on the company, model suffix, and sub-version, timing differ.
   
   - WS2812B V3    250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811151649_Worldsemi-WS2812B-V3_C114585.pdf
   - WS2812D       250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811021523_Worldsemi-WS2812D-F8_C139126.pdf
   - WS2812S       250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811011939_Worldsemi-WS2812S_C114584.pdf
 
-  After that, they change:
+  After that, they changed:
   - WS2812E       220-380ns/580-1600ns + 580-1600ns/220-420ns     https://datasheet.lcsc.com/szlcsc/1811151230_Worldsemi-WS2812E_C139127.pdf
   - WS2812B-B V5  220-380ns/580-1000ns + 580-1000ns/580-1000ns    https://datasheet.lcsc.com/szlcsc/2006151006_Worldsemi-WS2812B-B_C114586.pdf
                   This IS some documentation bug with the 1-low-time, yes ^^
@@ -75,6 +116,7 @@ I don't exacly know what kind of stripes I do have, but ALL of them work on ALL 
 #define WS_TIMING_250 // good 4MHz SPI for "new" chips, and not-so-good for the "new" chips
 //#define WS_TIMING_500 // good 4MHz SPI for "old" chips, and probably not for "new" chips
 
+// The LED buffer is BYTE based, you need to take care yourself of the byte order for each color:
 uint8_t buffer[LEDS * 3];
 
 void setup() {
