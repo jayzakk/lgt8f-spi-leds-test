@@ -1,8 +1,8 @@
 /*
   LGT8F driving WS2812 using SPI
 
-  This mcu offers 4 bytes SPI FIFO buffer each for output and input
-  With this buffer, we are able to create a constant clocked bitstream, which is a basic requirement for driving those stripes.
+  This mcu offers 4 bytes SPI FIFO leddata each for output and input
+  With this leddata, we are able to create a constant clocked bitstream, which is a basic requirement for driving those stripes.
   This allows short ISRs while driving the strip, including the timer() ISR (not valid at 8MHz sysclock, it's just toooo slow).
 
   Connect the stripe at pin D11/MOSI
@@ -121,11 +121,11 @@
 */
 
 // how many leds in the strip?
-#define LEDS 60
+#define LEDS 29
 
 // we can do basic gamma correction (using the mapping table floating around in the net):
 //#define GAMMACORRECTION
-// switch R+G in output loop (RGB to GRB color order fix)
+// switch R+G in output loop (RGB to GRB color order fix), if you have plain RGB buffers from somewhere else
 //#define GRB_ON_THE_FLY
 
 // allow ISRs? This will be ignored at 8MHz sysclock
@@ -138,8 +138,28 @@
 //#define WS_TIMING_500 // good 4MHz SPI for "old" chips, and probably not for "new" chips
 
 
-// The LED buffer is BYTE based, you need to take care yourself of the byte order for each color:
-uint8_t buffer[LEDS * 3];
+struct cRGB {
+  #ifdef GRB_ON_THE_FLY
+  uint8_t r;
+  uint8_t g;
+  #else
+  uint8_t g;
+  uint8_t r;
+  #endif
+  uint8_t b;  
+  set(uint8_t red, uint8_t green, uint8_t blue) {
+    r=red;
+    g=green;
+    b=blue;
+  }
+} __attribute__((packed));
+
+// The LED leddata is BYTE based, you need to take care yourself of the byte order for each color:
+union leddataUNION {
+  uint8_t raw[LEDS * 3];
+  cRGB led[LEDS];
+  } leddata;
+
 
 void setup() {
   setupSpiLeds();
@@ -150,19 +170,32 @@ void loop() {
 }
 
 
+void setPixel(int led, cRGB color) {
+  leddata.led[led].set(color.r,color.g,color.b);
+}
+
+void setPixel(int led, uint8_t red, uint8_t green, uint8_t blue) { 
+  leddata.led[led].set(red,green,blue);
+}
 
 void setupSpiLeds() {
+  // D10 (SS) must be set output, HIGH; SPI may stop working, if not
+  // D11 (MOSI) must be set output, as this is will be overriden by SPI hardware
+  // It also must be set LOW, because this is the level we need when SPI is done
   fastioWrite(D10, HIGH);
   fastioMode(D10, OUTPUT);
   fastioMode(D11, OUTPUT);
   fastioWrite(D11, LOW);
 
+  // SPI control register: Enable SPI, most significant bit comes first
   SPCR = 0 << SPIE | 1 << SPE | 1 << MSTR;
 
 #if ((!defined(WS_TIMING_250) && !defined(WS_TIMING_500) && !defined(WS_TIMING_375)) || (defined(WS_TIMING_250) && defined(WS_TIMING_500)) || (defined(WS_TIMING_250) && defined(WS_TIMING_375)) || (defined(WS_TIMING_500) && defined(WS_TIMING_375)))
 #pragma GCC error "Define ONE of of the WS_TIMING variants"
 #endif
 
+  // configure the SPI clock for our needs
+  
 #ifdef WS_TIMING_375
   // SPI=8M LEDs=800k
 #if F_CPU == 32000000   // :4
@@ -189,7 +222,7 @@ void setupSpiLeds() {
 
 
 #endif
-
+  // clear the SPFR register
   SPFR = 0; // (WRFULL,WREMPT,WRPTR1,WRPTR2)
   SPCR &= ~(1 << SPE); // disable SPI
 
@@ -201,7 +234,7 @@ const uint8_t PROGMEM gamma8[] = {    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
 #endif
 
 #ifdef GRB_ON_THE_FLY
-#define WS_READNEXT *(p+(ccount^1))
+#define WS_READNEXT *(p+(ccount==0?1:ccount==1?0:2))
 #else
 #define WS_READNEXT *p++;
 #endif
@@ -221,7 +254,8 @@ void outSpiLeds(uint8_t*p, int leds) {
   cli();
 #endif
 
-  SPCR |= 1 << SPE; // enable SPI
+  // enable SPI, will start taking over the D11 port as soon as we write the first byte
+  SPCR |= 1 << SPE;
 
   while (p < pEnd) {
 #ifdef GAMMACORRECTION
@@ -315,8 +349,8 @@ void outSpiLeds(uint8_t*p, int leds) {
 #ifdef GRB_ON_THE_FLY
     ccount++;
     if (ccount == 3) {
+      p+=ccount;
       ccount = 0;
-      p += 3;
     }
 #endif
 
@@ -325,22 +359,23 @@ void outSpiLeds(uint8_t*p, int leds) {
   }
 
 
-  // keep line low and switch SPI off while low - if not, output signal becomes high state after buffer emptied
 #ifdef ALLOW_ISRS_INBETWEEN
   // disable ISRs for now
   cli();
 #endif
-  SPIOUT(0);
-  SPIOUT(0);
-  SPIOUT(0);
-  SPIOUT(0);
-  SPCR &= ~(1 << SPE); // disable SPI
 
-#ifndef ALLOW_ISRS_INBETWEEN
-  // allow ISRs again
+  // keep D11 line low - if not, output signal becomes high state after leddata emptied
+  SPIOUT(0);
+  SPIOUT(0);
+  SPIOUT(0);
+  SPIOUT(0);
+  // disable SPI, even while SPI transferring bytes in the leddata
+  // thats ok, as we just need a constant LOW level on D11 now
+  // we MAY see a very short HIGH spike, but that is shorter than the WS2812 cares of
+  SPCR &= ~(1 << SPE);
+  // now D11 is under GPIO control
+
   SREG = sreg;
-#endif
-
 }
 
 
@@ -349,29 +384,29 @@ void rainbowBRG() {
   uint16_t i, j;
 
   for (j = 0; j < 256; j++) {
-    uint8_t*p = buffer;
     for (i = 0; i < LEDS; i++) {
       byte WheelPos = (2 * (i * 1 + j)) & 255;
       if (WheelPos < 85) {
-        *p++ = WheelPos * 3;
-        *p++ = 255 - WheelPos * 3;
-        *p++ = 0;
+        setPixel(i,255 - WheelPos * 3,WheelPos * 3,0);
       }
       else if (WheelPos < 170) {
         WheelPos -= 85;
-        *p++ = 255 - WheelPos * 3;
-        *p++ = 0;
-        *p++ = WheelPos * 3;
+        setPixel(i,0,255 - WheelPos * 3,WheelPos * 3);
       }
       else {
         WheelPos -= 170;
-        *p++ = 0;
-        *p++ = WheelPos * 3;
-        *p++ = 255 - WheelPos * 3;
+        setPixel(i,WheelPos * 3,0,255 - WheelPos * 3);
       }
     }
 
-    outSpiLeds(buffer, LEDS);
+    // set first 5 pixels
+    setPixel(0,255,0,0); // R
+    setPixel(1,0,255,0); // G
+    setPixel(2,0,0,255); // B
+    setPixel(3,255,255,255); // WHITE
+    setPixel(4,0,0,0); // BLACK
+
+    outSpiLeds(leddata.raw, LEDS);
     delay(20);
   }
 }
