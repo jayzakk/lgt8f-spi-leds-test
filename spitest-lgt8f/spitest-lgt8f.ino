@@ -107,8 +107,8 @@ void outSpiLeds(uint8_t*p, int leds) {
     //                    111xxxx0 00111xxx x000111x xxx00011 1xxxx000
 
     // defines: only the msb 7 bits, as the 3 lsb are always 0
-#define fb0    0b01110000
-#define fb1    0b01111111
+    #define fb0    0b01110000
+    #define fb1    0b01111111
 
     // A=128 B=64 C=32 D=16
     cli();
@@ -133,8 +133,8 @@ void outSpiLeds(uint8_t*p, int leds) {
     //                    11x0011x 0011x001 1x0011x0 011x0011 x0011x00
     
     // defines: only the msb 3 bits, as the 2 lsb are always 0
-#define fb0 0b00000110
-#define fb1 0b00000111
+    #define fb0 0b00000110
+    #define fb1 0b00000111
 
     // A=128 B=64 C=32 D=16 E=8 F=4 G=2 H=1
     cli();
@@ -143,6 +143,15 @@ void outSpiLeds(uint8_t*p, int leds) {
     SPIOUT((val & 16 ? fb1 << 6 : fb0 << 6) | (val & 8 ? fb1 << 1 : fb0 << 1));   //D+E
     SPIOUT((val & 4 ? fb1 << 4 : fb0 << 4) | 3); // G 2 msbs are always 1         //F+G
     SPIOUT((val & 2 ? fb1 << 7 : fb0 << 7) | (val & 1 ? fb1 << 2 : fb0 << 2));    //G+H
+
+/*  this looks MUCH nicer, but is 12 bytes longer!
+    SPIOUT( 0b11000110 | ((val&128)>>2) | ((val&64)>>6) );
+    SPIOUT( 0b00110001 | ((val&32)>>2) );
+    SPIOUT( 0b10001100 | ((val&16)<<2) | ((val&8)>>2) );
+    SPIOUT( 0b01100011 | ((val&4)<<2) );
+    SPIOUT( 0b00011000 | ((val&2)<<6) | ((val&1)<<2) );
+*/
+    
     SREG = sreg;
 #endif
 
