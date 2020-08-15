@@ -17,20 +17,20 @@
 
 
   How does this work?
-  
+
   The WS2811/12/13/..-series of LEDs do need 24 bits of color information (8 bits for each basic color red/green/blue, in some chip specific color order).
   These bits are transmitted using a special, pulse-width based serial one-wire protocol:
   A "1" bit is sent as a long HIGH amd a short LOW, as a "0" bit is a short HIGH and a long LOW level.
-  
-  We now abuse a hardware byte serializer (SPI device) to fake the needed protocol by sending a couple of 1 bits for the HIGH level, and a couple 
+
+  We now abuse a hardware byte serializer (SPI device) to fake the needed protocol by sending a couple of 1 bits for the HIGH level, and a couple
   of 0 bits for the LOW level. The number of bits defines the length of the HIGH or LOW level sent.
-  As an example, if we send a "10000000" through SPI with 8MHz, we would see a HIGH level of 125ns (nanoseconds), and a LOW level of 875ns, for 
-  a total cycle of 1000ns (1/8th of 8MHz). Unfortunately, the WS LEDs need a total cycle time (HIGH+LOW phase) of 1250ns, which equates to 800kHz. To 
-  accomplish that, we need to not use 8 bits for a cycle, but 10 (at 8MHz) or 5 (at 4MhZ). The code needs to convert the 8 bit color data into 80 (or 40) 
+  As an example, if we send a "10000000" through SPI with 8MHz, we would see a HIGH level of 125ns (nanoseconds), and a LOW level of 875ns, for
+  a total cycle of 1000ns (1/8th of 8MHz). Unfortunately, the WS LEDs need a total cycle time (HIGH+LOW phase) of 1250ns, which equates to 800kHz. To
+  accomplish that, we need to not use 8 bits for a cycle, but 10 (at 8MHz) or 5 (at 4MhZ). The code needs to convert the 8 bit color data into 80 (or 40)
   bits, which is 10 (or 5) bytes. Back to a correct byte boundary, we can write a very simple code.
 
   Example again for a 40-bit transfer:
-  The code needs to send the first color byte 200 (decimal, which is C8 in hex or 11001000 in binary). These 8 bits (7-0, highest first) have to be packed 
+  The code needs to send the first color byte 200 (decimal, which is C8 in hex or 11001000 in binary). These 8 bits (7-0, highest first) have to be packed
   into a bitstream. From timing definitions (see below), we know we need to send "10000" binary for a "0" and "11110" binary for a 1, at 4MHz SPI speed.
   So, we split the 8 bits of the input data ("200") into 8 blocks each 5 bits:
 
@@ -45,18 +45,18 @@
 
   and combine them to a total of 40 bits in a row:
 
-  11110111 10100001 00001111 01000010 00010000  
+  11110111 10100001 00001111 01000010 00010000
 
   These 5 bytes are sent timing-accurate using the SPI serializer hardware, and the WS LEDs will understand a color value of "200".
-  Three of these values make up a full color (red, green, blue). Now, each of the LEDs in a strip want their own color, so have to to send 
-  this for each LED. The first (receiving) LED transfers this data to the next one, as soon as it receives new data for itself. This chain 
+  Three of these values make up a full color (red, green, blue). Now, each of the LEDs in a strip want their own color, so have to to send
+  this for each LED. The first (receiving) LED transfers this data to the next one, as soon as it receives new data for itself. This chain
   works "by itself". Having 30 LEDs, makes up 90 color values (30 times red, green, blue), and 450 bytes to be transferred.
   When no new data is sent in a specified time, all the LEDs will "latch": switch in parallel to the last color they received for themselves.
 
   Easy, isn't it? ;)
-   
 
-  
+
+
 
   WS2812 LED chip timing:
 
@@ -66,7 +66,7 @@
   Which means:
    0-Bit: HIGH=250-550ns,  LOW=700-1000ns
    1-Bit: HIGH=700-1000ns, LOW= 250-550ns
-  
+
   There is a "new" timing for models B-v5,C,Mini and WS2813+, which is:
    0-Bit: HIGH=220-380ns,  LOW=580-1600ns
    1-Bit: HIGH=580-1600ns, LOW=220- 420 ns
@@ -74,7 +74,7 @@
 
 
   There a a LOT of this 2812 LEDs around, and depending on the company, model suffix, and sub-version, timing differ.
-  
+
   - WS2812B V3    250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811151649_Worldsemi-WS2812B-V3_C114585.pdf
   - WS2812D       250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811021523_Worldsemi-WS2812D-F8_C139126.pdf
   - WS2812S       250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811011939_Worldsemi-WS2812S_C114584.pdf
@@ -85,7 +85,7 @@
                   This IS some documentation bug with the T1L, yes ^^
   - WS2812C       220-380ns/580-1600ns + 580-1600ns/220-420ns     https://datasheet.lcsc.com/szlcsc/1810231210_Worldsemi-WS2812C_C114587.pdf
   - WS2813-Mini   220-380ns/580-1600ns + 580-1600ns/220-420ns     https://datasheet.lcsc.com/szlcsc/1810010024_Worldsemi-WS2813-Mini-WS2813-3535_C189639.pdf
-  
+
 
 
   This code has 2 (and a half) timing "modes":
@@ -97,17 +97,17 @@
   2) WS_TIMING_500: Still-in-specs timing for the "old chips":
     5 bits each bit @4M SPI: 0=500ns/750ns 1=750ns/500ns
     Will also work with 8MHz clocked MCU, as we only use 4MHz SPI speed
-    
+
   2b) WS_TIMING_250: Still-in-specs timing for the "new chips":
     Same as 2), but using: 0=250ns/1000ns 1=1000ns/250ns
     Though THAT would be in spec to the older chips, too, it's exactly on their limits.
-   
+
   I don't exacly know what kind of stripes I do have, but ALL of them work on ALL of the modes.
   The DO (chain output) signals from the WS (measured by oscilloscope) suggest the old timing:
   - strip type A: 370/920 + 750/500
   - strip type B: 360/910 + 700/550
   They SHOULD be WS2812E as I ordered the ECO strips, but they output the old timing by themselves.
-  
+
   Oh, and if anyone is asking "what is the ECO version"?
   - they are cheaper (25%)
   - they may use more power (16ma instead 12ma for each color)
@@ -115,7 +115,7 @@
   - no 100nf filter capacitor in the chip
   - for processing/soldering of single parts: MSL level 6 only (reflow immediately)
   But they are perfect for some home projects
-  
+
   Just lets assume that WS_TIMING_250 is a safe setting valid for all types
 
 */
@@ -160,7 +160,7 @@ void setupSpiLeds() {
   SPCR = 0 << SPIE | 1 << SPE | 1 << MSTR;
 
 #if ((!defined(WS_TIMING_250) && !defined(WS_TIMING_500) && !defined(WS_TIMING_375)) || (defined(WS_TIMING_250) && defined(WS_TIMING_500)) || (defined(WS_TIMING_250) && defined(WS_TIMING_375)) || (defined(WS_TIMING_500) && defined(WS_TIMING_375)))
-  #pragma GCC error "Define ONE of of the WS_TIMING variants"
+#pragma GCC error "Define ONE of of the WS_TIMING variants"
 #endif
 
 #ifdef WS_TIMING_375
@@ -210,22 +210,22 @@ const uint8_t PROGMEM gamma8[] = {    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
 
 void outSpiLeds(uint8_t*p, int leds) {
 #ifdef GRB_ON_THE_FLY
-  uint8_t ccount=0;
+  uint8_t ccount = 0;
 #endif
-  uint8_t *pEnd = p+(leds*3);
+  uint8_t *pEnd = p + (leds * 3);
 
   uint8_t sreg = SREG;
 
 #ifndef ALLOW_ISRS_INBETWEEN
-    // disable ISRs for all
-    cli();
-#endif    
+  // disable ISRs for all
+  cli();
+#endif
 
   SPCR |= 1 << SPE; // enable SPI
 
-  while (p<pEnd) {
+  while (p < pEnd) {
 #ifdef GAMMACORRECTION
-    
+
     uint8_t val = pgm_read_byte(&gamma8[WS_READNEXT]);
 #else
     uint8_t val = WS_READNEXT;
@@ -234,7 +234,7 @@ void outSpiLeds(uint8_t*p, int leds) {
 #ifdef ALLOW_ISRS_INBETWEEN
     // disable ISRs for now
     cli();
-#endif    
+#endif
 
 #ifdef WS_TIMING_375
     // 375/875 timing:
@@ -243,8 +243,8 @@ void outSpiLeds(uint8_t*p, int leds) {
     //                    111xxxx0 00111xxx x000111x xxx00011 1xxxx000
 
     // defines: only the msb 7 bits, as the 3 lsb are always 0
-    #define fb0    0b01110000
-    #define fb1    0b01111111
+#define fb0    0b01110000
+#define fb1    0b01111111
 
     // A=128 B=64 C=32 D=16
     SPIOUT(val & 128 ? fb1 << 1 : fb0 << 1);                                      //A
@@ -274,8 +274,8 @@ void outSpiLeds(uint8_t*p, int leds) {
     //                    11x0011x 0011x001 1x0011x0 011x0011 x0011x00
 
     // defines: only the msb 3 bits, as the 2 lsb are always 0
-    #define fb0 0b00000110
-    #define fb1 0b00000111
+#define fb0 0b00000110
+#define fb1 0b00000111
 
     // A=128 B=64 C=32 D=16 E=8 F=4 G=2 H=1
     SPIOUT((val & 128 ? fb1 << 5 : fb0 << 5) | (val & 64 ? fb1 : fb0));           //A+B
@@ -299,8 +299,8 @@ void outSpiLeds(uint8_t*p, int leds) {
     //                    1xxx01xx x01xxx01 xxx01xxx 01xxx01x xx01xxx0
 
     // defines: only the msb 4 bits, as the 1 lsb is always 0
-    #define fb0 0b00001000
-    #define fb1 0b00001111
+#define fb0 0b00001000
+#define fb1 0b00001111
     SPIOUT((val & 128 ? fb1 << 4 : fb0 << 4) | (val & 64 ? fb1 >> 1 : fb0 >> 1));                             //A+B
     SPIOUT((val & 64 ? fb1 << 7 : fb0 << 7 ) | (val & 32 ? fb1 << 2 : fb0 << 2) | 1); // D msb is 1 always    //B+C+D
     SPIOUT((val & 16 ? fb1 << 5 : fb0 << 5) | (val & 8 ? fb1 : fb0));                                         //D+E
@@ -314,25 +314,32 @@ void outSpiLeds(uint8_t*p, int leds) {
 
 #ifdef GRB_ON_THE_FLY
     ccount++;
-    if (ccount==3) { ccount=0; p+=3; }
+    if (ccount == 3) {
+      ccount = 0;
+      p += 3;
+    }
 #endif
-    
+
 #endif
 
   }
 
 
   // keep line low and switch SPI off while low - if not, output signal becomes high state after buffer emptied
+#ifdef ALLOW_ISRS_INBETWEEN
+  // disable ISRs for now
+  cli();
+#endif
   SPIOUT(0);
   SPIOUT(0);
   SPIOUT(0);
   SPIOUT(0);
   SPCR &= ~(1 << SPE); // disable SPI
 
-  #ifndef ALLOW_ISRS_INBETWEEN
-    // allow ISRs again
-    SREG = sreg;
-  #endif
+#ifndef ALLOW_ISRS_INBETWEEN
+  // allow ISRs again
+  SREG = sreg;
+#endif
 
 }
 
