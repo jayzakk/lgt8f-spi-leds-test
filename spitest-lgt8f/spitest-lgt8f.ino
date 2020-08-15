@@ -2,15 +2,16 @@
   LGT8F driving WS2812 using SPI
 
   This mcu offers 4 bytes SPI FIFO buffer each for output and input
-  With this buffer, we are able to create a constant clocked bitstream, which is a basic requirement for driving those stripes
+  With this buffer, we are able to create a constant clocked bitstream, which is a basic requirement for driving those stripes.
+  This allows short ISRs while driving the strip, including the timer() ISR (not valid at 8MHz sysclock, it's just toooo slow).
 
   Connect the stripe at pin D11/MOSI
   Blocks pin D10/SS, sorry
 
   This is just a proof of concept: push bytes through SPI
-  We do not take care of cRGB() or setPixel() things
   Output is not color-ordered (1:1 byte-to-bitstream output)
-  Take care of your color ordering yourself
+  - take care of your color ordering yourself (GRB is default on WS2812)
+  - you may define GRB_ON_THE_FLY to flip R+G in the output loop
 
   All that bit checking and shifting will get perfectly optimized by the compiler, even if it looks complicated
 
@@ -78,10 +79,10 @@
   - WS2812D       250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811021523_Worldsemi-WS2812D-F8_C139126.pdf
   - WS2812S       250-550ns/700-1000ns + 700-1000ns/250-550ns     https://datasheet.lcsc.com/szlcsc/1811011939_Worldsemi-WS2812S_C114584.pdf
 
-  After that, they changed:
-  - WS2812E       220-380ns/580-1600ns + 580-1600ns/220-420ns     https://datasheet.lcsc.com/szlcsc/1811151230_Worldsemi-WS2812E_C139127.pdf
+  After that, they changed in the datasheet:
+  - WS2812E (ECO) 220-380ns/580-1600ns + 580-1600ns/220-420ns     https://datasheet.lcsc.com/szlcsc/1811151230_Worldsemi-WS2812E_C139127.pdf
   - WS2812B-B V5  220-380ns/580-1000ns + 580-1000ns/580-1000ns    https://datasheet.lcsc.com/szlcsc/2006151006_Worldsemi-WS2812B-B_C114586.pdf
-                  This IS some documentation bug with the 1-low-time, yes ^^
+                  This IS some documentation bug with the T1L, yes ^^
   - WS2812C       220-380ns/580-1600ns + 580-1600ns/220-420ns     https://datasheet.lcsc.com/szlcsc/1810231210_Worldsemi-WS2812C_C114587.pdf
   - WS2813-Mini   220-380ns/580-1600ns + 580-1600ns/220-420ns     https://datasheet.lcsc.com/szlcsc/1810010024_Worldsemi-WS2813-Mini-WS2813-3535_C189639.pdf
   
@@ -101,20 +102,41 @@
     Same as 2), but using: 0=250ns/1000ns 1=1000ns/250ns
     Though THAT would be in spec to the older chips, too, it's exactly on their limits.
    
-I don't exacly know what kind of stripes I do have, but ALL of them work on ALL of the modes...
+  I don't exacly know what kind of stripes I do have, but ALL of them work on ALL of the modes.
+  The DO (chain output) signals from the WS (measured by oscilloscope) suggest the old timing:
+  - strip type A: 370/920 + 750/500
+  - strip type B: 360/910 + 700/550
+  They SHOULD be WS2812E as I ordered the ECO strips, but they output the old timing by themselves.
+  
+  Oh, and if anyone is asking "what is the ECO version"?
+  - they are cheaper (25%)
+  - they may use more power (16ma instead 12ma for each color)
+  - they do not have a guaranteed "typical" brightness (read: the are darker)
+  - no 100nf filter capacitor in the chip
+  - for processing/soldering of single parts: MSL level 6 only (reflow immediately)
+  But they are perfect for some home projects
+  
+  Just lets assume that WS_TIMING_250 is a safe setting valid for all types
 
 */
 
 // how many leds in the strip?
-#define LEDS 30
+#define LEDS 60
 
 // we can do basic gamma correction (using the mapping table floating around in the net):
 //#define GAMMACORRECTION
+// switch R+G in output loop (RGB to GRB color order fix)
+//#define GRB_ON_THE_FLY
+
+// allow ISRs? This will be ignored at 8MHz sysclock
+#define ALLOW_ISRS_INBETWEEN
+
 
 // we can use one of the 3 different timing modes (only undef ONE of them!)
 //#define WS_TIMING_375 // accurate 8MHz SPI for "old" and "new" chips
-#define WS_TIMING_250 // good 4MHz SPI for "new" chips, and not-so-good for the "new" chips
+#define WS_TIMING_250 // good 4MHz SPI for "new" chips, and not-so-perfect for the "old" chips
 //#define WS_TIMING_500 // good 4MHz SPI for "old" chips, and probably not for "new" chips
+
 
 // The LED buffer is BYTE based, you need to take care yourself of the byte order for each color:
 uint8_t buffer[LEDS * 3];
@@ -124,7 +146,7 @@ void setup() {
 }
 
 void loop() {
-  rainbow();
+  rainbowBRG();
 }
 
 
@@ -137,14 +159,11 @@ void setupSpiLeds() {
 
   SPCR = 0 << SPIE | 1 << SPE | 1 << MSTR;
 
-#if !defined(WS_TIMING_250) && !defined(WS_TIMING_500) && !defined(WS_TIMING_375)
+#if ((!defined(WS_TIMING_250) && !defined(WS_TIMING_500) && !defined(WS_TIMING_375)) || (defined(WS_TIMING_250) && defined(WS_TIMING_500)) || (defined(WS_TIMING_250) && defined(WS_TIMING_375)) || (defined(WS_TIMING_500) && defined(WS_TIMING_375)))
   #pragma GCC error "Define ONE of of the WS_TIMING variants"
 #endif
 
 #ifdef WS_TIMING_375
-  #if defined(WS_TIMING_250) || defined(WS_TIMING_500)
-  #pragma GCC error "Define ONE of of the WS_TIMING variants"
-  #endif
   // SPI=8M LEDs=800k
 #if F_CPU == 32000000   // :4
   SPSR = 0 << SPI2X;
@@ -155,10 +174,6 @@ void setupSpiLeds() {
 #endif
 
 #else
-  #if defined(WS_TIMING_250) && defined(WS_TIMING_500)
-  #pragma GCC error "Define ONE of of the WS_TIMING variants"
-  #endif
-
   // SPI=4M LEDs=800k
 #if F_CPU == 32000000   // :8
   SPCR |= 1 << SPR0;
@@ -166,6 +181,7 @@ void setupSpiLeds() {
 #elif F_CPU == 16000000 // :4
   SPSR = 0 << SPI2X;
 #elif F_CPU == 8000000  // :2
+#undef ALLOW_ISRS_INBETWEEN
   SPSR = 1 << SPI2X;
 #else
 #pragma GCC error "LGT8SPILED only supports F_CPU 8+16+32MHz"
@@ -184,23 +200,41 @@ void setupSpiLeds() {
 const uint8_t PROGMEM gamma8[] = {    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,    1,  1,  1,  1,  1,  1,  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,    2,  3,  3,  3,  3,  3,  3,  3,  4,  4,  4,  4,  4,  5,  5,  5,    5,  6,  6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9, 10,   10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16,   17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 24, 24, 25,   25, 26, 27, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 35, 35, 36,   37, 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50,   51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 67, 68,   69, 70, 72, 73, 74, 75, 77, 78, 79, 81, 82, 83, 85, 86, 87, 89,   90, 92, 93, 95, 96, 98, 99, 101, 102, 104, 105, 107, 109, 110, 112, 114,  115, 117, 119, 120, 122, 124, 126, 127, 129, 131, 133, 135, 137, 138, 140, 142,  144, 146, 148, 150, 152, 154, 156, 158, 160, 162, 164, 167, 169, 171, 173, 175,  177, 180, 182, 184, 186, 189, 191, 193, 196, 198, 200, 203, 205, 208, 210, 213,  215, 218, 220, 223, 225, 228, 231, 233, 236, 239, 241, 244, 247, 249, 252, 255 };
 #endif
 
+#ifdef GRB_ON_THE_FLY
+#define WS_READNEXT *(p+(ccount^1))
+#else
+#define WS_READNEXT *p++;
+#endif
+
 #define SPIOUT(N) { uint8_t _m=((N));while ((SPFR & _BV(WRFULL))); SPDR=_m; }
 
 void outSpiLeds(uint8_t*p, int leds) {
-  int count = leds * 3;
+#ifdef GRB_ON_THE_FLY
+  uint8_t ccount=0;
+#endif
+  uint8_t *pEnd = p+(leds*3);
 
   uint8_t sreg = SREG;
+
+#ifndef ALLOW_ISRS_INBETWEEN
+    // disable ISRs for all
+    cli();
+#endif    
+
   SPCR |= 1 << SPE; // enable SPI
 
-  while (count-- > 0) {
+  while (p<pEnd) {
 #ifdef GAMMACORRECTION
-    uint8_t val = pgm_read_byte(&gamma8[*p++]);
+    
+    uint8_t val = pgm_read_byte(&gamma8[WS_READNEXT]);
 #else
-    uint8_t val = *p++;
+    uint8_t val = WS_READNEXT;
 #endif
 
+#ifdef ALLOW_ISRS_INBETWEEN
     // disable ISRs for now
     cli();
+#endif    
 
 #ifdef WS_TIMING_375
     // 375/875 timing:
@@ -219,10 +253,12 @@ void outSpiLeds(uint8_t*p, int leds) {
     SPIOUT((val & 32 ? fb1 << 5 : fb0 << 5) | 3); // D 2 msbs are always 1        //C+D
     SPIOUT(val & 16 ? fb1 << 3 : fb0 << 3);                                       //D
 
+#ifdef ALLOW_ISRS_INBETWEEN
     // allow ISRs for a short moment, which may have queued up:
     SREG = sreg;
     asm ( "nop;\n" );
     cli();
+#endif
 
     // E=8 F=4 G=2 H=1
     SPIOUT(val & 8 ? fb1 << 1 : fb0 << 1);                                        //E
@@ -272,9 +308,19 @@ void outSpiLeds(uint8_t*p, int leds) {
     SPIOUT((val & 2 ? fb1 << 6 : fb0 << 6) | (val & 1 ? fb1 << 1 : fb0 << 1));                                //G+H
 #endif
 
+#ifdef ALLOW_ISRS_INBETWEEN
     // allow ISRs again
     SREG = sreg;
+
+#ifdef GRB_ON_THE_FLY
+    ccount++;
+    if (ccount==3) { ccount=0; p+=3; }
+#endif
+    
+#endif
+
   }
+
 
   // keep line low and switch SPI off while low - if not, output signal becomes high state after buffer emptied
   SPIOUT(0);
@@ -282,11 +328,17 @@ void outSpiLeds(uint8_t*p, int leds) {
   SPIOUT(0);
   SPIOUT(0);
   SPCR &= ~(1 << SPE); // disable SPI
+
+  #ifndef ALLOW_ISRS_INBETWEEN
+    // allow ISRs again
+    SREG = sreg;
+  #endif
+
 }
 
 
 // from: https://codebender.cc/sketch:80438#Neopixel%20Rainbow.ino
-void rainbow() {
+void rainbowBRG() {
   uint16_t i, j;
 
   for (j = 0; j < 256; j++) {
@@ -311,6 +363,7 @@ void rainbow() {
         *p++ = 255 - WheelPos * 3;
       }
     }
+
     outSpiLeds(buffer, LEDS);
     delay(20);
   }
