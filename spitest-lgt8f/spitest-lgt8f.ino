@@ -111,13 +111,16 @@
   They SHOULD be WS2812E as I ordered the ECO strips, but they output the old timing by themselves.
 
   Oh, and if anyone is asking "what is the ECO version"?
-  - they are cheaper (25%)
-  - they may use more power (16ma instead 12ma for each color)
-  - they do not have a guaranteed "typical" brightness (read: they are darker and may even visually differ in brightness)
-  - no 100nf filter capacitor in the chip
+  - they are cheaper (up to 50%)
+  - they have different (lower) power usage for the colors at nearly same light levels
+  - they have a higher voltage drop
+  - they do not have a guaranteed "typical" brightness (visibly darker blue)
+  - no 100nf filter capacitor in the chip (EMC!)
   - for processing/soldering of single parts: MSL level 6 only (reflow immediately)
-  But they are perfect for your home projects
-
+  But they are usually perfect for your home projects with a lower budget.
+  You will get original BTF Lighting Black PCB 1m/30leds IP30 for €1,50:
+  https://de.aliexpress.com/item/2049977323.html?spm=a2g0x.12057483.0.0.79c13430BPUZ0K
+  
   Just lets assume that WS_TIMING_250 is a safe setting valid for all types
 
 */
@@ -128,6 +131,7 @@
 
 // we can do basic gamma correction (using the mapping table floating around in the net):
 //#define GAMMACORRECTION
+
 // switch R+G in output loop (RGB to GRB color order fix), if you have plain RGB buffers from somewhere else
 //#define GRB_ON_THE_FLY
 
