@@ -132,7 +132,7 @@
 #define ALLOW_ISRS_INBETWEEN
 
 
-// we can use one of the 3 different timing modes (only undef ONE of them!)
+// we can use one of the 3 different timing modes (only define ONE of them!)
 //#define WS_TIMING_375 // accurate 8MHz SPI for "old" and "new" chips
 #define WS_TIMING_250 // good 4MHz SPI for "new" chips, and not-so-perfect for the "old" chips
 //#define WS_TIMING_500 // good 4MHz SPI for "old" chips, and probably not for "new" chips
