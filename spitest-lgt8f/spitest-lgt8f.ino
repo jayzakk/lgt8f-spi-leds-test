@@ -1,12 +1,14 @@
 /*
-  LGT8F driving WS2812 using SPI
+  LGT8F driving WS2812 using SPI or USART-as-SPI
 
-  This mcu offers 4 bytes SPI FIFO leddata each for output and input
-  With this leddata, we are able to create a constant clocked bitstream, which is a basic requirement for driving those stripes.
+  This MCU offers 4 bytes SPI FIFO buffer each for output and input.
+  With this buffer, we are able to create a constant clocked bitstream, which is a basic requirement for driving those stripes.
   This allows short ISRs while driving the strip, including the timer() ISR (not valid at 8MHz sysclock, it's just toooo slow).
+  
+  New: USART0 can be used as SPI, too; output pin is D6 then. We only have ONE byte buffer here, but it's sufficent for a clean bitstream.
 
-  Connect the stripe at pin D11/MOSI
-  Blocks pin D10/SS, sorry
+  Connect the stripe at pin D11/MOSI (USART: D6/TXD-alt)
+  Blocks pin D10/SS, sorry (USART: D4/XCK can not be used as output)
 
   This is just a proof of concept: push bytes through SPI
   Output is not color-ordered (1:1 byte-to-bitstream output)
@@ -120,6 +122,7 @@
 
 */
 
+
 // how many leds in the strip?
 #define NUMBER_OF_LEDS 29
 
@@ -131,6 +134,8 @@
 // allow ISRs? This will be ignored at 8MHz sysclock
 #define ALLOW_ISRS_INBETWEEN
 
+// use USART0 as SPI (if you do not need a lot of serial communication)
+//#define USE_USARTSPI
 
 // we can use one of the 3 different timing modes (only define ONE of them!)
 //#define WS_TIMING_375 // accurate 8MHz SPI for "old" and "new" chips
@@ -220,8 +225,67 @@ void display() {
 // the code ^^ 
 // 
 
+// a gamma correction table, if needed
+// will be stored to progmem to keep the ram free
+#ifdef GAMMACORRECTION
+const uint8_t PROGMEM gamma8[] = {    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,    1,  1,  1,  1,  1,  1,  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,    2,  3,  3,  3,  3,  3,  3,  3,  4,  4,  4,  4,  4,  5,  5,  5,    5,  6,  6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9, 10,   10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16,   17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 24, 24, 25,   25, 26, 27, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 35, 35, 36,   37, 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50,   51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 67, 68,   69, 70, 72, 73, 74, 75, 77, 78, 79, 81, 82, 83, 85, 86, 87, 89,   90, 92, 93, 95, 96, 98, 99, 101, 102, 104, 105, 107, 109, 110, 112, 114,  115, 117, 119, 120, 122, 124, 126, 127, 129, 131, 133, 135, 137, 138, 140, 142,  144, 146, 148, 150, 152, 154, 156, 158, 160, 162, 164, 167, 169, 171, 173, 175,  177, 180, 182, 184, 186, 189, 191, 193, 196, 198, 200, 203, 205, 208, 210, 213,  215, 218, 220, 223, 225, 228, 231, 233, 236, 239, 241, 244, 247, 249, 252, 255 };
+#endif
+
+#if ((!defined(WS_TIMING_250) && !defined(WS_TIMING_500) && !defined(WS_TIMING_375)) || (defined(WS_TIMING_250) && defined(WS_TIMING_500)) || (defined(WS_TIMING_250) && defined(WS_TIMING_375)) || (defined(WS_TIMING_500) && defined(WS_TIMING_375)))
+#pragma GCC error "Define ONE of of the WS_TIMING variants"
+#endif
+
+#if F_CPU <= 8000000
+#undef ALLOW_ISRS_INBETWEEN
+#endif
+
+// macro to read the next color data from buffer; special version to change the byte order
+#ifdef GRB_ON_THE_FLY
+#define WS_READNEXT *(p+(ccount==0?1:ccount==1?0:2))
+#else
+#define WS_READNEXT *p++;
+#endif
+
+// macro to read the next color data, extended by gamma
+#ifdef GAMMACORRECTION
+#define WS_READNEXT_WITHGAMMA pgm_read_byte(&gamma8[WS_READNEXT])
+#else
+#define WS_READNEXT_WITHGAMMA WS_READNEXT
+#endif
+
+// macro to:
+// - calculate the argument FIRST (will be stored in a register, no local stack memory)
+//   to put it to SPI buffer as soon as there is room
+// - if the WRFULL (write buffer full) bit is set, wait until not set anymore
+// - then put the data into SPI buffer
+#ifndef USE_USARTSPI // use the hardware SPI
+#define SPIOUT(N) { uint8_t _m=((N));while ((SPFR & _BV(WRFULL))); SPDR=_m; }
+#else // use the USART SPI
+#define SPIOUT(N) { uint8_t _m=((N));while (!(UCSR0A & _BV(UDRE0))); UDR0=_m; }
+#endif
+
+// macro to enable and disable SPI in the loop
+#ifndef USE_USARTSPI
+#define ENABLE_SPI  SPCR |= 1 << SPE
+#define DISABLE_SPI SPCR &= ~(1 << SPE)
+#else
+#define ENABLE_SPI  PMX0|=1<<WCE;PMX0|=(1<<TXD6)
+#define DISABLE_SPI PMX0|=1<<WCE;PMX0&=~(1<<TXD6)
+#endif
+
+// macro to short allow ISR, or just disable them
+#ifdef ALLOW_ISRS_INBETWEEN
+#define TAKE_CARE_OF_ISR SREG = sreg;asm ( "nop;\n" );cli()
+#else
+#define TAKE_CARE_OF_ISR cli()
+#endif
+
+//
+// main function: setup SPI controller
+//
 
 
+#ifndef USE_USARTSPI
 void setupSpiLeds() {
   // D10 (SS) must be set output, HIGH; SPI may stop working, if not
   // D11 (MOSI) must be set output, as this is will be overriden by SPI hardware
@@ -234,10 +298,6 @@ void setupSpiLeds() {
   // SPI control register: Enable SPI, most significant bit comes first
   SPCR = 0 << SPIE | 1 << SPE | 1 << MSTR;
 
-#if ((!defined(WS_TIMING_250) && !defined(WS_TIMING_500) && !defined(WS_TIMING_375)) || (defined(WS_TIMING_250) && defined(WS_TIMING_500)) || (defined(WS_TIMING_250) && defined(WS_TIMING_375)) || (defined(WS_TIMING_500) && defined(WS_TIMING_375)))
-#pragma GCC error "Define ONE of of the WS_TIMING variants"
-#endif
-
   // configure the SPI clock for our needs
 
 #ifdef WS_TIMING_375
@@ -246,11 +306,10 @@ void setupSpiLeds() {
   SPSR = 0 << SPI2X;
 #elif F_CPU == 16000000 // :2
   SPSR = 1 << SPI2X;
-#else
+#else // f_cpu
 #pragma GCC error "LGT8SPILED only supports F_CPU 16+32MHz"
-#endif
-
-#else
+#endif // f_cpu
+#else // ws_timing
   // SPI=4M LEDs=800k
 #if F_CPU == 32000000   // :8
   SPCR |= 1 << SPR0;
@@ -258,33 +317,53 @@ void setupSpiLeds() {
 #elif F_CPU == 16000000 // :4
   SPSR = 0 << SPI2X;
 #elif F_CPU == 8000000  // :2
-#undef ALLOW_ISRS_INBETWEEN
   SPSR = 1 << SPI2X;
-#else
+#else // f_cpu
 #pragma GCC error "LGT8SPILED only supports F_CPU 8+16+32MHz"
-#endif
-
-
-#endif
+#endif // f_cpu
+#endif // ws_timing
   // clear the SPFR register
   SPFR = 0; // (WRFULL,WREMPT,WRPTR1,WRPTR2)
-  SPCR &= ~(1 << SPE); // disable SPI
-
+  DISABLE_SPI;
 }
 
 
-#ifdef GAMMACORRECTION
-const uint8_t PROGMEM gamma8[] = {    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,    1,  1,  1,  1,  1,  1,  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,    2,  3,  3,  3,  3,  3,  3,  3,  4,  4,  4,  4,  4,  5,  5,  5,    5,  6,  6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9, 10,   10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16,   17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 24, 24, 25,   25, 26, 27, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 35, 35, 36,   37, 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50,   51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 67, 68,   69, 70, 72, 73, 74, 75, 77, 78, 79, 81, 82, 83, 85, 86, 87, 89,   90, 92, 93, 95, 96, 98, 99, 101, 102, 104, 105, 107, 109, 110, 112, 114,  115, 117, 119, 120, 122, 124, 126, 127, 129, 131, 133, 135, 137, 138, 140, 142,  144, 146, 148, 150, 152, 154, 156, 158, 160, 162, 164, 167, 169, 171, 173, 175,  177, 180, 182, 184, 186, 189, 191, 193, 196, 198, 200, 203, 205, 208, 210, 213,  215, 218, 220, 223, 225, 228, 231, 233, 236, 239, 241, 244, 247, 249, 252, 255 };
-#endif
+#else // USE_USARTSPI
 
-#ifdef GRB_ON_THE_FLY
-#define WS_READNEXT *(p+(ccount==0?1:ccount==1?0:2))
-#else
-#define WS_READNEXT *p++;
-#endif
 
-#define SPIOUT(N) { uint8_t _m=((N));while ((SPFR & _BV(WRFULL))); SPDR=_m; }
+void setupSpiLeds() {
+  // we use USART0 as SPI
+  // D6 will be used as remapped TXD, to "save" some connected USBSerial from chaos (RXD stays at D0)
+  // D4 can NOT be used as OUTPUT (as XCK (SPI clock) will override the port), but still as input
+  fastioMode(D6, OUTPUT);
+  fastioWrite(D6, LOW);
 
+  // and now setup the USART-SPI mode
+  // bitrate divider must be 0 to switch to SPI mode:
+  UBRR0 = 0;
+  // then we can enable SPI MASTER mode and both receiver and transmitter
+  UCSR0C = (1<<UMSEL01)|(1<<UMSEL00);
+  UCSR0B = (1<<RXEN0)|(1<<TXEN0);
+
+#ifdef WS_TIMING_375
+#if F_CPU>=16000000
+  UBRR0=((F_CPU/8000000/2)-1); // SPI=8M LEDs=800k
+#else // f_cpu
+#pragma GCC error "LGT8SPILED only supports F_CPU 16+32MHz"
+#endif // f_cpu
+#else // ws_timing
+#if F_CPU>=8000000
+  UBRR0=((F_CPU/4000000/2)-1); // SPI=4M LEDs=800k
+#else // f_cpu  
+#pragma GCC error "LGT8SPILED only supports F_CPU 8+16+32MHz"
+#endif // f_cpu
+#endif // ws_timing
+}
+#endif //usartspi
+
+// 
+// main function: write the buffer to the stripe
+//
 void outSpiLeds(void*data, int numleds) {
   uint8_t*p = (uint8_t*)data;
 
@@ -292,29 +371,15 @@ void outSpiLeds(void*data, int numleds) {
   uint8_t ccount = 0;
 #endif
   uint8_t *pEnd = p + (numleds * 3);
-
-  uint8_t sreg = SREG;
-
-#ifndef ALLOW_ISRS_INBETWEEN
-  // disable ISRs for all
-  cli();
-#endif
-
-  // enable SPI, will start taking over the D11 port as soon as we write the first byte
-  SPCR |= 1 << SPE;
-
+  uint8_t sreg = SREG;  // fetch the current status register, including the ISR allow flag
+  
+  TAKE_CARE_OF_ISR;
+  // enable SPI, will start taking over the D11 (USART=D6) port
+  ENABLE_SPI;
+  
   while (p < pEnd) {
-#ifdef GAMMACORRECTION
-
-    uint8_t val = pgm_read_byte(&gamma8[WS_READNEXT]);
-#else
-    uint8_t val = WS_READNEXT;
-#endif
-
-#ifdef ALLOW_ISRS_INBETWEEN
-    // disable ISRs for now
-    cli();
-#endif
+    uint8_t val = WS_READNEXT_WITHGAMMA;
+    TAKE_CARE_OF_ISR;
 
 #ifdef WS_TIMING_375
     // 375/875 timing:
@@ -332,21 +397,14 @@ void outSpiLeds(void*data, int numleds) {
     SPIOUT((val & 32 ? fb1 >> 3 : fb0 >> 3) | (val & 64 ? fb1 << 5 : fb0 << 5));  //B+C
     SPIOUT((val & 32 ? fb1 << 5 : fb0 << 5) | 3); // D 2 msbs are always 1        //C+D
     SPIOUT(val & 16 ? fb1 << 3 : fb0 << 3);                                       //D
-
-#ifdef ALLOW_ISRS_INBETWEEN
-    // allow ISRs for a short moment, which may have queued up:
-    SREG = sreg;
-    asm ( "nop;\n" );
-    cli();
-#endif
-
+    TAKE_CARE_OF_ISR;
     // E=8 F=4 G=2 H=1
     SPIOUT(val & 8 ? fb1 << 1 : fb0 << 1);                                        //E
     SPIOUT(val & 4 ? fb1 >> 1 : fb0 >> 1);                                        //F
     SPIOUT((val & 2 ? fb1 >> 3 : fb0 >> 3) | (val & 4 ? fb1 << 5 : fb0 << 5));    //F+G
     SPIOUT((val & 2 ? fb1 << 5 : fb0 << 5) | 3); // G 2 msbs  are always 1        //G+H
     SPIOUT(val & 1 ? fb1 << 3 : fb0 << 3);                                        //H
-#endif
+#endif // ws_timing
 
 #ifdef WS_TIMING_500
     // 500/750 timing:
@@ -371,7 +429,7 @@ void outSpiLeds(void*data, int numleds) {
         SPIOUT( 0b01100011 | ((val&4)<<2) );
         SPIOUT( 0b00011000 | ((val&2)<<6) | ((val&1)<<2) );
     */
-#endif
+#endif // ws_timing
 
 #ifdef WS_TIMING_250
     // 250/1000 timing:
@@ -386,40 +444,28 @@ void outSpiLeds(void*data, int numleds) {
     SPIOUT((val & 16 ? fb1 << 5 : fb0 << 5) | (val & 8 ? fb1 : fb0));                                         //D+E
     SPIOUT((val & 4 ? fb1 << 3 : fb0 << 3) | (val & 2 ? fb1 >> 2 : fb0 >> 2));                                //F+G
     SPIOUT((val & 2 ? fb1 << 6 : fb0 << 6) | (val & 1 ? fb1 << 1 : fb0 << 1));                                //G+H
-#endif
-
-#ifdef ALLOW_ISRS_INBETWEEN
-    // allow ISRs again
-    SREG = sreg;
+#endif // ws_timing
 
 #ifdef GRB_ON_THE_FLY
-    ccount++;
-    if (ccount == 3) {
+    if (++ccount == 3) {
       p += ccount;
       ccount = 0;
     }
 #endif
-
-#endif
-
   }
 
-
-#ifdef ALLOW_ISRS_INBETWEEN
-  // disable ISRs for now
-  cli();
-#endif
-
-  // keep D11 line low - if not, output signal becomes high state after leddata emptied
+  // keep D11 (USART=D6) line low - if not, output signal becomes high state after leddata emptied
+  TAKE_CARE_OF_ISR;
   SPIOUT(0);
   SPIOUT(0);
   SPIOUT(0);
   SPIOUT(0);
-  // disable SPI, even while SPI transferring bytes in the leddata
+  // disable SPI, even while SPI transferring bytes in the leddata (hardware SPI only)
   // thats ok, as we just need a constant LOW level on D11 now
-  // we MAY see a very short HIGH spike, but that is shorter than the WS2812 cares of
-  SPCR &= ~(1 << SPE);
-  // now D11 is under GPIO control
+  // we MAY see a very short HIGH spike, but it is shorter than the WS2812 cares of
+  // after disabling, D11 (USART=D6) is back to regular GPIO control
+  DISABLE_SPI;
 
+  // allow ISRs again
   SREG = sreg;
 }
