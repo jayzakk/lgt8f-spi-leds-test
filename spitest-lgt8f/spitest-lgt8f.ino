@@ -124,7 +124,7 @@
 
 
 // how many leds in the strip?
-#define NUMBER_OF_LEDS 29
+#define NUMBER_OF_LEDS 30
 
 // we can do basic gamma correction (using the mapping table floating around in the net):
 //#define GAMMACORRECTION
@@ -143,11 +143,20 @@
 //#define WS_TIMING_500 // good 4MHz SPI for "old" chips, and probably not for "new" chips
 
 
+/*
 
-// ARDUINO setup() and loop()
+  ----------------------------------------------------------
+
+  ARDUINO setup() and loop() with a demo rainbow code
+
+  ----------------------------------------------------------
+
+*/
 
 void setup() {
+  // setup of the hardware happens once in out display function, so nobody can forget
 }
+
 
 void loop() {
   // example code: do effect
@@ -170,6 +179,7 @@ void loop() {
       }
     }
 
+
     // set first 5 pixels
     setPixel(0, 255, 0, 0); // R
     setPixel(1, 0, 255, 0); // G
@@ -177,11 +187,26 @@ void loop() {
     setPixel(3, 255, 255, 255); // WHITE
     setPixel(4, 0, 0, 0); // BLACK
 
-    display();
+    displayWithLimit();    
     delay(20);
   }
 }
 
+
+/*
+
+  ----------------------------------------------------------
+  
+  Some example functions a usual library will have:
+
+  - a RGB structure
+  - setPixel function
+  - display function
+  - calculate current / limit current (power consumtion)
+  
+  ----------------------------------------------------------
+  
+*/
 
 
 
@@ -210,20 +235,77 @@ void setPixel(int led, uint8_t red, uint8_t green, uint8_t blue) {
   leds[led].set(red, green, blue);
 }
 
-// example function: push to stripe, initialize, of not done before
+// example function: push to stripe, initialize, if not done before
+// limit to 500mA to secure the power supply (usb)
 boolean wsIsInitialized = false;
-void display() {
+void displayWithLimit() {
   if (!wsIsInitialized) {
     setupSpiLeds();
     wsIsInitialized = true;
   }
-  outSpiLeds(leds, NUMBER_OF_LEDS);
+
+  outSpiLeds(leds, NUMBER_OF_LEDS,calculateBrightnessForPower(leds,NUMBER_OF_LEDS,500));
 }
 
+// Power consumtion defines for the next function.
+// !!! MEASURED ON AN WS2812E (ECO) STRIP - VALUES MAY/WILL DIFFER ON OTHER LED CHIPS !!!
+// Measured currents: r=11.8ma, g=10ma, b=5.7ma (full-white at 30 LEDs / 1 meter: ~760mA => power drop)
+// the defines here are multiplied by 2 to get a slightly better resolution, and rounded down to compensate for voltage drop in the stripe
+#define COLOR_R_MA 23 // = 11.5ma
+#define COLOR_G_MA 20 // = 10.0ma
+#define COLOR_B_MA 11 // =  5.5ma - yes, the blue is not really bright on this stripes
 
-//
-// the code ^^ 
-// 
+// example function: calculate power usage of the strip, returns mA
+// the power usage is very different by color. plus, the voltage drop is not calculated for longer strips with more than 30 LEDs.
+// I assume you are a good guy and add power as often as possible.
+uint32_t calculateLedPower(void*data, int numleds) {  
+  uint32_t total0=0,total1=0,total2=0;
+  uint8_t*p = (uint8_t*)data;
+  uint8_t*pEnd = p + (numleds * 3);
+  uint8_t ccount=0;
+  uint8_t val;
+  while (p<pEnd) {
+#ifdef GAMMACORRECTION
+    val=pgm_read_byte(&gamma8[*p++]);
+#else
+    val=*p++;
+#endif
+
+    switch (ccount++) {
+      case 0: total0+=val; break;
+      case 1: total1+=val; break;
+      case 2: total2+=val; ccount=0; break;
+    } 
+  }
+
+#ifdef GRB_ON_THE_FLY
+  total0 = total0*COLOR_R_MA;
+  total0+= total1*COLOR_G_MA;
+#else
+  total0 = total0*COLOR_G_MA;
+  total0+= total1*COLOR_R_MA;
+#endif
+  total0+= total2*COLOR_B_MA;
+  return total0>>9;
+}
+
+// example function: calculate max brightness for a given max power consumption
+uint8_t calculateBrightnessForPower(void*data, int numleds,uint32_t mAmax) {
+  uint32_t current=calculateLedPower(data,numleds);
+  mAmax=(mAmax<<8)/current;
+  return mAmax>255?255:mAmax;
+}
+
+/*  
+
+ ----------------------------------------------------------
+ 
+ the "real" proof of concept code - do the bit magic ^^ 
+ 
+ ----------------------------------------------------------
+ 
+ 
+*/ 
 
 // a gamma correction table, if needed
 // will be stored to progmem to keep the ram free
@@ -268,7 +350,7 @@ const uint8_t PROGMEM gamma8[] = {    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
 #ifndef USE_USARTSPI
 #define ENABLE_SPI  SPCR |= 1 << SPE
 #define DISABLE_SPI SPCR &= ~(1 << SPE)
-#else
+#else // for USART, we just "borrow" the pin from and "return" it back to the serial usb interface
 #define ENABLE_SPI  PMX0|=1<<WCE;PMX0|=(1<<TXD6)
 #define DISABLE_SPI PMX0|=1<<WCE;PMX0&=~(1<<TXD6)
 #endif
@@ -280,12 +362,13 @@ const uint8_t PROGMEM gamma8[] = {    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
 #define TAKE_CARE_OF_ISR cli()
 #endif
 
+
+#ifndef USE_USARTSPI
+
 //
 // main function: setup SPI controller
 //
 
-
-#ifndef USE_USARTSPI
 void setupSpiLeds() {
   // D10 (SS) must be set output, HIGH; SPI may stop working, if not
   // D11 (MOSI) must be set output, as this is will be overriden by SPI hardware
@@ -330,6 +413,9 @@ void setupSpiLeds() {
 
 #else // USE_USARTSPI
 
+//
+// main function: setup USART as SPI controller
+//
 
 void setupSpiLeds() {
   // we use USART0 as SPI
@@ -362,9 +448,16 @@ void setupSpiLeds() {
 #endif //usartspi
 
 // 
-// main function: write the buffer to the stripe
+// main function: write the buffer to the stripe (with full brightness)
 //
 void outSpiLeds(void*data, int numleds) {
+  outSpiLeds(data,numleds,255);
+}
+
+// 
+// main function: write the buffer to the stripe (with brightness value)
+//
+void outSpiLeds(void*data, int numleds, uint8_t brightness) {
   uint8_t*p = (uint8_t*)data;
 
 #ifdef GRB_ON_THE_FLY
@@ -379,6 +472,9 @@ void outSpiLeds(void*data, int numleds) {
   
   while (p < pEnd) {
     uint8_t val = WS_READNEXT_WITHGAMMA;
+    if (brightness!=255) {
+      val=(val*brightness)>>8;
+    }
     TAKE_CARE_OF_ISR;
 
 #ifdef WS_TIMING_375
@@ -454,13 +550,13 @@ void outSpiLeds(void*data, int numleds) {
 #endif
   }
 
-  // keep D11 (USART=D6) line low - if not, output signal becomes high state after leddata emptied
+  // keep D11 (USART=D6) line low - if not, output signal becomes high state after buffer emptied
   TAKE_CARE_OF_ISR;
   SPIOUT(0);
   SPIOUT(0);
   SPIOUT(0);
   SPIOUT(0);
-  // disable SPI, even while SPI transferring bytes in the leddata (hardware SPI only)
+  // disable SPI, even while SPI transferring bytes in the buffer (hardware SPI only)
   // thats ok, as we just need a constant LOW level on D11 now
   // we MAY see a very short HIGH spike, but it is shorter than the WS2812 cares of
   // after disabling, D11 (USART=D6) is back to regular GPIO control
